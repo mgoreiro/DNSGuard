@@ -62,7 +62,7 @@ final class PiholeClient: DNSClient {
         ("HaGeZi Pro", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt")
     ]
 
-    func audit() async throws -> AuditReport {
+    func audit(bench: BenchContext?) async throws -> AuditReport {
         let cfg = dig(try await call("/config"), "config")
         let verAny = try? await call("/info/version")
         let blockAny = try? await call("/dns/blocking")
@@ -79,6 +79,8 @@ final class PiholeClient: DNSClient {
         let blocked = num(dig(statsAny, "queries", "blocked"))
         let pct = num(dig(statsAny, "queries", "percent_blocked"))
         let upstreams = (dig(cfg, "dns", "upstreams") as? [String]) ?? []
+        let preferred = bench?.preferredPlain ?? ["9.9.9.9", "149.112.112.112"]
+        let preferredText = preferred.joined(separator: ", ")
 
         var summary: [SummaryItem] = [
             .init(label: "Versión", value: version),
@@ -150,8 +152,8 @@ final class PiholeClient: DNSClient {
         // 4. Upstreams
         if upstreams.isEmpty {
             f.append(Finding(title: "No hay servidores DNS upstream", detail: "Pi-hole no podrá resolver nada.", severity: .critical,
-                             fixDescription: "Usar Quad9 (9.9.9.9, 149.112.112.112)",
-                             apply: { [self] in try await patch(["dns": ["upstreams": ["9.9.9.9", "149.112.112.112"]]]) }))
+                             fixDescription: "Usar \(preferredText)",
+                             apply: { [self] in try await patch(["dns": ["upstreams": preferred]]) }))
         } else {
             let hostOf: (String) -> String = { $0.split(separator: "#").first.map(String.init) ?? $0 }
             let usesLocalResolver = upstreams.contains { hostOf($0).hasPrefix("127.") || hostOf($0) == "::1" }
@@ -161,15 +163,23 @@ final class PiholeClient: DNSClient {
             } else if allPrivate {
                 f.append(Finding(title: "Upstream = router/ISP", detail: "Todos los upstreams son direcciones privadas (\(upstreams.joined(separator: ", "))). Normalmente el router reenvía al DNS del operador, con peor privacidad y sin DNSSEC. Cámbialo solo si no dependes de nombres locales del router.",
                                  severity: .warning, preselected: false,
-                                 fixDescription: "Usar Quad9 (9.9.9.9, 149.112.112.112)",
-                                 apply: { [self] in try await patch(["dns": ["upstreams": ["9.9.9.9", "149.112.112.112"]]]) }))
+                                 fixDescription: "Usar \(preferredText)",
+                                 apply: { [self] in try await patch(["dns": ["upstreams": preferred]]) }))
             } else if upstreams.count < 2 {
                 let extra = upstreams.contains(where: { $0.hasPrefix("9.9.9.9") }) ? "149.112.112.112" : "9.9.9.9"
                 f.append(Finding(title: "Un único upstream", detail: "Si cae, se pierde la resolución. Añade uno de respaldo.",
                                  severity: .warning, fixDescription: "Añadir \(extra) como upstream secundario",
                                  apply: { [self] in try await patch(["dns": ["upstreams": upstreams + [extra]]]) }))
             } else {
-                f.append(Finding(title: "Upstreams redundantes", detail: upstreams.joined(separator: ", "), severity: .ok))
+                if let b = bench, b.slowerThanPublic, let u = b.uncachedMs, let best = b.bestRef {
+                    f.append(Finding(title: "Upstreams lentos (\(String(format: "%.0f", u)) ms sin caché)",
+                                     detail: "Medición: \(best.name) responde en \(String(format: "%.0f", best.ms)) ms desde tu Mac. Se proponen los dos DNS públicos más rápidos medidos (\(b.fastestNames)). Usan DNS sin cifrar; para cifrado usa cloudflared/unbound.",
+                                     severity: .warning, preselected: upstreams.allSatisfy { !isPrivateHost($0.split(separator: "#").first.map(String.init) ?? $0) },
+                                     fixDescription: "Usar \(preferredText) como upstreams",
+                                     apply: { [self] in try await patch(["dns": ["upstreams": preferred]]) }))
+                } else {
+                    f.append(Finding(title: "Upstreams redundantes", detail: upstreams.joined(separator: ", "), severity: .ok))
+                }
             }
         }
 
@@ -230,6 +240,13 @@ final class PiholeClient: DNSClient {
         // 10. Registro de consultas
         if let ql = dig(cfg, "dns", "queryLogging") as? Bool, !ql {
             f.append(Finding(title: "Registro de consultas desactivado", detail: "Mejor privacidad, pero no tendrás estadísticas detalladas.", severity: .info))
+        }
+
+        // Latencia hasta el servidor (según la prueba de rendimiento)
+        if let c = bench?.cachedMs, c > 10 {
+            f.append(Finding(title: "Latencia alta hasta Pi-hole (\(String(format: "%.0f", c)) ms en caché)",
+                             detail: "En una LAN suele ser < 5 ms. Suele deberse al Wi-Fi: conecta por cable (el servidor y, si puedes, este equipo) o acerca el punto de acceso. No se puede arreglar desde la configuración del servidor.",
+                             severity: .info))
         }
 
         return AuditReport(summary: summary, findings: f)

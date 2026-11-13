@@ -64,7 +64,7 @@ final class AdGuardClient: DNSClient {
         ["https://", "tls://", "quic://", "h3://", "sdns://"].contains { u.hasPrefix($0) }
     }
 
-    func audit() async throws -> AuditReport {
+    func audit(bench: BenchContext?) async throws -> AuditReport {
         let status = try await call("/status")
         let dns = (try await call("/dns_info")) as? [String: Any] ?? [:]
         let filt = try? await call("/filtering/status")
@@ -79,6 +79,7 @@ final class AdGuardClient: DNSClient {
         let upstreams = (dns["upstream_dns"] as? [String]) ?? []
         let bootstrap = (dns["bootstrap_dns"] as? [String]) ?? []
         let cache = Int(num(dns["cache_size"]) ?? 0)
+        let preferred = bench?.preferredDoH ?? Self.recommendedUpstreams
 
         let summary: [SummaryItem] = [
             .init(label: "Versión", value: version),
@@ -161,10 +162,10 @@ final class AdGuardClient: DNSClient {
                              fixDescription: "Usar Quad9 y Cloudflare por DoH",
                              apply: { [self] in
                                  try await call("/dns_config", method: "POST",
-                                                body: ["upstream_dns": Self.recommendedUpstreams, "bootstrap_dns": Self.recommendedBootstrap])
+                                                body: ["upstream_dns": preferred, "bootstrap_dns": Self.recommendedBootstrap])
                              }))
         } else if !plainPublic.isEmpty {
-            let newUpstreams = rulesOnly + encrypted + (encrypted.isEmpty ? Self.recommendedUpstreams : []) + plainPrivate
+            let newUpstreams = rulesOnly + encrypted + (encrypted.isEmpty ? preferred : []) + plainPrivate
             let needsBootstrap = bootstrap.isEmpty
             f.append(Finding(title: "DNS upstream sin cifrar",
                              detail: "\(plainPublic.joined(separator: ", ")) viaja en claro: tu operador y cualquiera en la ruta ve cada dominio que consultas.",
@@ -181,11 +182,24 @@ final class AdGuardClient: DNSClient {
                              severity: .warning, preselected: false, fixDescription: "Usar Quad9 y Cloudflare por DoH",
                              apply: { [self] in
                                  try await call("/dns_config", method: "POST",
-                                                body: ["upstream_dns": rulesOnly + Self.recommendedUpstreams,
+                                                body: ["upstream_dns": rulesOnly + preferred,
                                                        "bootstrap_dns": bootstrap.isEmpty ? Self.recommendedBootstrap : bootstrap])
                              }))
         } else {
-            f.append(Finding(title: "Upstreams cifrados", detail: encrypted.joined(separator: ", "), severity: .ok))
+            if let b = bench, b.slowerThanPublic, let u = b.uncachedMs, let best = b.bestRef {
+                let newUp = rulesOnly + preferred + plainPrivate
+                f.append(Finding(title: "Upstreams lentos (\(String(format: "%.0f", u)) ms sin caché)",
+                                 detail: "Medición: \(best.name) responde en \(String(format: "%.0f", best.ms)) ms desde tu Mac. Se proponen los dos DNS más rápidos medidos (\(b.fastestNames)) por DoH, en modo paralelo.",
+                                 severity: .warning, preselected: plainPrivate.isEmpty,
+                                 fixDescription: "Usar \(b.fastestNames) por DoH + modo paralelo",
+                                 apply: { [self] in
+                                     var body: [String: Any] = ["upstream_dns": newUp, "upstream_mode": "parallel"]
+                                     if bootstrap.isEmpty { body["bootstrap_dns"] = Self.recommendedBootstrap }
+                                     try await call("/dns_config", method: "POST", body: body)
+                                 }))
+            } else {
+                f.append(Finding(title: "Upstreams cifrados", detail: encrypted.joined(separator: ", "), severity: .ok))
+            }
         }
 
         // 5. Modo paralelo
@@ -198,10 +212,18 @@ final class AdGuardClient: DNSClient {
         }
 
         // 6. Caché
-        if cache < 4_194_304 {
-            f.append(Finding(title: "Caché DNS pequeña (\(cache / 1024) KiB)", detail: "El valor por defecto es 4 MiB.",
-                             severity: .warning, fixDescription: "Subir la caché a 4 MiB",
-                             apply: { [self] in try await call("/dns_config", method: "POST", body: ["cache_size": 4_194_304]) }))
+        if cache < 16_777_216 {
+            f.append(Finding(title: "Caché DNS pequeña (\(cache / 1024) KiB)",
+                             detail: "Más caché = más respuestas inmediatas sin consultar al upstream. 16 MiB cubre de sobra una red doméstica y ocupa poca memoria.",
+                             severity: cache < 4_194_304 ? .warning : .info, fixDescription: "Subir la caché a 16 MiB",
+                             apply: { [self] in try await call("/dns_config", method: "POST", body: ["cache_size": 16_777_216]) }))
+        }
+        let ttlMin = Int(num(dns["cache_ttl_min"]) ?? 0)
+        if ttlMin == 0 {
+            f.append(Finding(title: "Sin TTL mínimo en la caché",
+                             detail: "Muchos dominios publican TTL de 30–60 s, lo que fuerza consultas continuas al upstream. Un mínimo de 300 s aumenta los aciertos de caché. Efecto secundario: los cambios de IP en dominios con balanceo rápido tardan hasta 5 min en verse.",
+                             severity: .info, preselected: false, fixDescription: "Fijar TTL mínimo de caché en 300 s",
+                             apply: { [self] in try await call("/dns_config", method: "POST", body: ["cache_ttl_min": 300]) }))
         }
         if let opt = dns["cache_optimistic"] as? Bool, !opt {
             f.append(Finding(title: "Caché optimista desactivada",
@@ -223,6 +245,21 @@ final class AdGuardClient: DNSClient {
             f.append(Finding(title: "Sin límite de consultas por cliente", detail: "Un cliente defectuoso puede saturar el servidor.",
                              severity: .warning, fixDescription: "Limitar a 20 consultas/s por cliente",
                              apply: { [self] in try await call("/dns_config", method: "POST", body: ["ratelimit": 20]) }))
+        }
+
+        // Hallazgos según la prueba de rendimiento
+        if let b = bench {
+            if let rl = num(dns["ratelimit"]), rl > 0, rl < 100, b.lossPct > 2 {
+                f.append(Finding(title: "Pérdida de consultas (\(String(format: "%.0f", b.lossPct))%) con límite de \(Int(rl))/s",
+                                 detail: "El límite de tasa por cliente puede estar descartando consultas legítimas.",
+                                 severity: .warning, fixDescription: "Subir el límite a 100 consultas/s por cliente",
+                                 apply: { [self] in try await call("/dns_config", method: "POST", body: ["ratelimit": 100]) }))
+            }
+            if let c = b.cachedMs, c > 10 {
+                f.append(Finding(title: "Latencia alta hasta AdGuard (\(String(format: "%.0f", c)) ms en caché)",
+                                 detail: "En una LAN suele ser < 5 ms. Suele deberse al Wi-Fi: conecta por cable (el servidor y, si puedes, este equipo) o acerca el punto de acceso. No se puede arreglar desde la configuración del servidor.",
+                                 severity: .info))
+            }
         }
 
         // 9. Navegación segura

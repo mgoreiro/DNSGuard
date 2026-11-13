@@ -56,6 +56,8 @@ final class ServerSession: ObservableObject {
     @Published var error: String?
     @Published var log: [String] = []
     @Published var lastBackup: URL?
+    @Published var bench: BenchContext?
+    private var analyzedBench: UUID?
     private var client: DNSClient?
 
     init(server: DNSServer) { self.server = server }
@@ -93,7 +95,8 @@ final class ServerSession: ObservableObject {
         guard let client else { return }
         phase = .analyzing; error = nil
         do {
-            let r = try await client.audit()
+            let r = try await client.audit(bench: bench)
+            analyzedBench = bench?.id
             report = r
             selected = Set(r.findings.filter { $0.apply != nil && $0.preselected }.map(\.id))
             phase = .ready
@@ -133,8 +136,14 @@ final class ServerSession: ObservableObject {
                 addLog("✗ \(f.fixDescription ?? f.title): \(error.localizedDescription)")
             }
         }
+        addLog("Consejo: repite la prueba de rendimiento para medir la mejora.")
         if failed > 0 { self.error = "\(failed) cambio(s) fallaron. Revisa el registro." }
         await analyze()
+    }
+
+    /// Si hay resultados de rendimiento nuevos, vuelve a revisar para incluir las mejoras sugeridas.
+    func refreshIfBenchChanged() async {
+        if phase == .ready, bench?.id != analyzedBench { await analyze() }
     }
 
     func disconnect() async {

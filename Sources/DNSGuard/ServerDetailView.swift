@@ -7,6 +7,7 @@ struct ServerDetailView: View {
     @ObservedObject var session: ServerSession
     @State private var showLogin = false
     @State private var confirm = false
+    @State private var showBench = false
 
     private var server: DNSServer { session.server }
 
@@ -17,6 +18,9 @@ struct ServerDetailView: View {
             content
         }
         .sheet(isPresented: $showLogin) { LoginSheet(session: session) }
+        .onChange(of: session.bench?.id) { _ in Task { await session.refreshIfBenchChanged() } }
+        .onAppear { Task { await session.refreshIfBenchChanged() } }
+        .sheet(isPresented: $showBench) { BenchmarkSheet(servers: [server]) }
         .confirmationDialog("¿Aplicar \(session.selected.count) cambio(s) a \(server.host)?",
                             isPresented: $confirm, titleVisibility: .visible) {
             Button("Aplicar") { Task { await session.applySelected() } }
@@ -35,6 +39,7 @@ struct ServerDetailView: View {
                 Text(server.baseURL.absoluteString).font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
+            Button { showBench = true } label: { Label("Rendimiento", systemImage: "speedometer") }
             if session.phase == .ready || session.phase == .applying {
                 Button("Reanalizar") { Task { await session.analyze() } }.disabled(session.phase == .applying)
                 Button("Desconectar") { Task { await session.disconnect() } }.disabled(session.phase == .applying)

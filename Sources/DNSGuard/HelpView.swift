@@ -57,6 +57,17 @@ private let topics: [HelpTopic] = [
         ("Opcionales", "DNSSEC y navegación segura (envía prefijos de hash a AdGuard)."),
         ("Solo aviso", "Lista de clientes permitidos vacía: se informa pero no se cambia.")
     ]),
+    HelpTopic(id: "bench", title: "Prueba de rendimiento", icon: "speedometer", body: [
+        ("Qué hace", "Mide la latencia DNS de tus servidores enviando consultas reales por UDP/53 desde este Mac, y la compara con Cloudflare (1.1.1.1), Google (8.8.8.8) y Quad9 (9.9.9.9). No necesita credenciales."),
+        ("Cómo se lanza", "Botón «Rendimiento» en la cabecera de un servidor (solo ese) o en la barra lateral (todos los encontrados). «Repetir» vuelve a medir."),
+        ("En caché", "Mediana del tiempo de respuesta de 10 dominios populares ya resueltos (20 muestras). Mide la red hasta el servidor: en LAN debería estar por debajo de 5 ms."),
+        ("Sin caché", "Mediana de 10 consultas a nombres inexistentes únicos, que obligan al servidor a preguntar a su upstream. Mide la velocidad real de tus upstreams."),
+        ("Pérdida", "Porcentaje de consultas sin respuesta en 2 s. Si es alto, revisa la red o los límites de tasa."),
+        ("Bloqueo", "Cuántos de 3 dominios publicitarios conocidos bloquea el servidor (NXDOMAIN, 0.0.0.0, REFUSED o su propia IP)."),
+        ("Conclusiones", "Debajo de la tabla se indican problemas y sugerencias, p. ej. si tus upstreams son claramente más lentos que los públicos."),
+        ("Mejoras sugeridas", "Tras medir, la revisión del servidor añade mejoras según los resultados: cambiar a los upstreams más rápidos medidos (DoH + modo paralelo en AdGuard; IPs públicas en Pi-hole), subir la caché a 16 MiB, fijar un TTL mínimo de 300 s (opcional), subir el límite de tasa si hay pérdidas y avisar de latencia alta hasta el servidor (Wi-Fi). Si ya estás conectado, la revisión se actualiza sola al terminar la prueba; si no, aparecerán al conectar. Después de aplicarlas, repite la prueba para medir la mejora."),
+        ("Nota", "Las consultas se espacian 60 ms para no activar el límite de tasa de AdGuard (20/s por cliente), por eso cada servidor tarda unos 5 s. La medición incluye tu Wi-Fi.")
+    ]),
     HelpTopic(id: "apply", title: "Optimizar y copias", icon: "wand.and.stars", body: [
         ("Optimizar", "El botón «Optimizar (n)» aplica los n cambios marcados tras pedir confirmación. Después de aplicar se vuelve a analizar el servidor."),
         ("Copia de seguridad", "Antes de cambiar nada se guarda una copia en ~/Library/Application Support/DNSGuard/backups/. Pi-hole: exportación Teleporter (o JSON de configuración). AdGuard: JSON con su configuración. Si la copia falla, no se aplica ningún cambio."),

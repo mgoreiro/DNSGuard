@@ -6,10 +6,11 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var app: AppState
     @State private var showManual = false
+    @State private var showBenchAll = false
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(showManual: $showManual)
+            SidebarView(showManual: $showManual, showBench: $showBenchAll)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 270)
         } detail: {
             if let id = app.selectedID, let s = app.servers.first(where: { $0.id == id }) {
@@ -26,6 +27,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showManual) { ManualAddSheet() }
+        .sheet(isPresented: $showBenchAll) { BenchmarkSheet(servers: app.servers) }
         .task { await app.scan() }
     }
 }
@@ -33,6 +35,7 @@ struct ContentView: View {
 struct SidebarView: View {
     @EnvironmentObject var app: AppState
     @Binding var showManual: Bool
+    @Binding var showBench: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +65,8 @@ struct SidebarView: View {
                 HStack {
                     Button { Task { await app.scan() } } label: { Label("Escanear", systemImage: "dot.radiowaves.left.and.right") }
                         .disabled(app.scanning)
+                    Button { showBench = true } label: { Label("Rendimiento", systemImage: "speedometer") }
+                        .disabled(app.servers.isEmpty || app.scanning)
                     Spacer()
                     Button { showManual = true } label: { Label("Añadir IP", systemImage: "plus") }
                 }

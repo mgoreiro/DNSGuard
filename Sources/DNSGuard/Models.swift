@@ -60,7 +60,7 @@ enum DNSError: LocalizedError {
 
 protocol DNSClient: AnyObject {
     func login(user: String, password: String) async throws
-    func audit() async throws -> AuditReport
+    func audit(bench: BenchContext?) async throws -> AuditReport
     /// Devuelve los datos de la copia de seguridad y su extensión.
     func backup() async throws -> (Data, String)
     func logout() async

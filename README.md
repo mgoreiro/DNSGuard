@@ -20,6 +20,8 @@ El icono se regenera con `swift tools/make_icon.swift` (ver `Resources/`).
 3. Revisa los hallazgos (verde correcto · azul mejora · naranja aviso · rojo crítico).
 4. Marca/desmarca cambios y pulsa **Optimizar (n)**. Antes se guarda una copia en `~/Library/Application Support/DNSGuard/backups/`.
 
+**Prueba de rendimiento:** botón *Rendimiento* (por servidor o de todos). Mide latencia en caché, sin caché, pérdida y bloqueo con consultas DNS reales y lo compara con Cloudflare, Google y Quad9. Los resultados alimentan la revisión: upstreams más rápidos, caché mayor, TTL mínimo, límite de tasa y aviso de latencia alta (Wi-Fi).
+
 La ayuda completa está dentro de la app: menú **Ayuda › Ayuda de DNSGuard** (⌘?).
 
 ## Qué se revisa
@@ -42,6 +44,8 @@ Sources/DNSGuard/
   ContentView.swift       barra lateral, añadir IP manual
   ServerDetailView.swift  conexión, informe, hallazgos
   HelpView.swift          ventana de ayuda
+  Benchmark.swift         cliente DNS UDP y pruebas de latencia
+  BenchmarkView.swift     ventana de resultados
   AppState.swift          estado global y sesión por servidor
   NetworkScanner.swift    escaneo TCP/53 + identificación HTTP
   PiholeClient.swift      API Pi-hole v6
